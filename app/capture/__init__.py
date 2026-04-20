@@ -1,0 +1,1 @@
+"""Window capture helpers."""

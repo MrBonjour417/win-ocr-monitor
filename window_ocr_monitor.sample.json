@@ -1,0 +1,30 @@
+{
+  "window_title": "",
+  "question_roi": null,
+  "status_roi": null,
+  "poll_interval_ms": 800,
+  "stable_frames": 2,
+  "clear_frames": 2,
+  "change_threshold": 0.015,
+  "keywords": [
+    "开始",
+    "继续",
+    "确认",
+    "提交",
+    "保存",
+    "完成",
+    "下一步",
+    "返回",
+    "通知",
+    "告警",
+    "失败",
+    "成功",
+    "超时",
+    "状态更新",
+    "剩余时间",
+    "倒计时"
+  ],
+  "sound_path": "",
+  "snapshot_dir": "snapshots",
+  "window_size": null
+}
