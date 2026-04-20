@@ -6,7 +6,7 @@ from datetime import datetime
 
 import cv2
 import numpy as np
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QIcon, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -68,6 +68,9 @@ class MainWindow(QMainWindow):
         self._current_config_path = ""
         self._monitor_thread: MonitorThread | None = None
         self._last_capture: FrameCapture | None = None
+        self._calibration_timer = QTimer(self)
+        self._calibration_timer.setInterval(500)
+        self._calibration_timer.timeout.connect(self._refresh_live_calibration_preview)
 
         self._build_ui()
         self._setup_tray()
@@ -104,13 +107,13 @@ class MainWindow(QMainWindow):
         calibrate_layout = QVBoxLayout(calibrate_group)
 
         button_row = QHBoxLayout()
-        capture_button = QPushButton("截图校准")
-        capture_button.clicked.connect(self._capture_for_calibration)
+        self._capture_button = QPushButton("截图校准")
+        self._capture_button.clicked.connect(self._capture_for_calibration)
         question_button = QPushButton("框选题目区域")
         question_button.clicked.connect(lambda: self._set_selection_target("question_roi"))
         status_button = QPushButton("框选状态区域")
         status_button.clicked.connect(lambda: self._set_selection_target("status_roi"))
-        button_row.addWidget(capture_button)
+        button_row.addWidget(self._capture_button)
         button_row.addWidget(question_button)
         button_row.addWidget(status_button)
         button_row.addStretch()
@@ -304,16 +307,33 @@ class MainWindow(QMainWindow):
                 return
 
     def _capture_for_calibration(self) -> None:
+        if not self._update_calibration_capture(show_errors=True):
+            return
+
+        if not self._calibration_timer.isActive():
+            self._calibration_timer.start()
+            self._append_log("[Capture] 已启动实时校准预览。")
+
+        self._capture_button.setText("截图校准（预览中）")
+
+    def _refresh_live_calibration_preview(self) -> None:
+        if self._canvas.is_interacting():
+            return
+        self._update_calibration_capture(show_errors=False)
+
+    def _update_calibration_capture(self, show_errors: bool) -> bool:
         hwnd = self._window_combo.currentData()
         if not hwnd:
-            QMessageBox.warning(self, "未选择窗口", "请先选择需要监控的窗口。")
-            return
+            if show_errors:
+                QMessageBox.warning(self, "未选择窗口", "请先选择需要监控的窗口。")
+            return False
 
         frame_bgr = capture_window(hwnd)
         rect = get_window_rect(hwnd)
         if frame_bgr is None or rect is None:
-            QMessageBox.warning(self, "截图失败", "无法抓取目标窗口，请确认窗口未最小化。")
-            return
+            if show_errors:
+                QMessageBox.warning(self, "截图失败", "无法抓取目标窗口，请确认窗口未最小化。")
+            return False
 
         self._last_capture = FrameCapture(frame_bgr=frame_bgr, window_rect=rect, captured_at=datetime.now())
         self._reference_size = (rect.w, rect.h)
@@ -323,7 +343,11 @@ class MainWindow(QMainWindow):
             self._calibration_preview_size(),
         )
         self._sync_canvas_rois()
-        self._append_log(f"[Capture] 已抓取窗口截图：{rect.w}x{rect.h}")
+
+        if show_errors:
+            self._append_log(f"[Capture] 已抓取窗口截图：{rect.w}x{rect.h}")
+
+        return True
 
     def _set_selection_target(self, target: str) -> None:
         if self._last_capture is None:
@@ -461,6 +485,9 @@ class MainWindow(QMainWindow):
             return
 
         os.makedirs(config.snapshot_dir, exist_ok=True)
+        if self._calibration_timer.isActive():
+            self._calibration_timer.stop()
+            self._capture_button.setText("截图校准")
         self._monitor_thread = MonitorThread(hwnd, config)
         self._monitor_thread.status_updated.connect(self._handle_status_update)
         self._monitor_thread.question_event.connect(self._handle_question_event)
@@ -552,6 +579,7 @@ class MainWindow(QMainWindow):
         self._refresh_canvas_preview()
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._calibration_timer.stop()
         self._stop_monitoring()
         if self._tray_icon is not None:
             self._tray_icon.hide()

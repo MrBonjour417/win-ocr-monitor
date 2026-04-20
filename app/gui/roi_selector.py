@@ -70,6 +70,9 @@ class RoiCanvas(QWidget):
         self._selection_target = target
         self.update()
 
+    def is_interacting(self) -> bool:
+        return self._selection_target is not None or self._drag_start is not None
+
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if self._display_pixmap is None or self._selection_target is None:
             return
