@@ -41,7 +41,7 @@ from app.capture.window import capture_window, get_window_rect, list_windows, sa
 from app.config import monitor_config_from_dict, monitor_config_to_dict
 from app.detect.monitor import MonitorThread
 from app.gui.roi_selector import RoiCanvas
-from app.types import FrameCapture, MonitorConfig, QuestionEvent, Rect
+from app.types import DEFAULT_KEYWORDS, FrameCapture, MonitorConfig, QuestionEvent, Rect
 
 
 def _ndarray_to_pixmap(image_bgr: np.ndarray) -> QPixmap:
@@ -49,6 +49,10 @@ def _ndarray_to_pixmap(image_bgr: np.ndarray) -> QPixmap:
     height, width, channels = image_rgb.shape
     qimage = QImage(image_rgb.data, width, height, channels * width, QImage.Format.Format_RGB888)
     return QPixmap.fromImage(qimage)
+
+
+def default_keywords_text() -> str:
+    return ",".join(DEFAULT_KEYWORDS)
 
 
 class MainWindow(QMainWindow):
@@ -159,7 +163,7 @@ class MainWindow(QMainWindow):
         self._change_spin.setValue(0.015)
         settings_layout.addRow("变化阈值", self._change_spin)
 
-        self._keyword_edit = QLineEdit("开始,继续,确认,提交,保存,完成,下一步,返回,通知,告警,失败,成功,超时,状态更新,剩余时间,倒计时")
+        self._keyword_edit = QLineEdit(default_keywords_text())
         settings_layout.addRow("状态关键词 / Preset", self._keyword_edit)
 
         sound_row = QHBoxLayout()
