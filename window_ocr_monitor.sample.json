@@ -20,5 +20,14 @@
   ],
   "sound_path": "",
   "snapshot_dir": "snapshots",
-  "window_size": null
+  "window_size": null,
+  "ai": {
+    "enabled": false,
+    "prompt": "你是一个通用的桌面截图分析助手。\n\n请基于我提供的截图内容，完成以下任务：\n1. 简要概括截图中的主要内容或事件。\n2. 提取可见的关键信息，例如标题、状态、按钮、时间、提示语或其它重要文本。\n3. 给出一个简短结论，说明此时更像是提醒、确认、告警、任务处理，还是普通信息展示。\n\n要求：\n- 只依据截图中可见的信息回答，不要臆测隐藏内容。\n- 如果文字不清晰或内容不足，请明确说明“不确定”。\n- 不要编造不存在的字段。\n- 输出使用中文，尽量简洁清晰。\n",
+    "main_model": "gpt-5.4",
+    "verify_model": "gpt-5.4",
+    "same_model": true,
+    "wait_timeout_sec": 20,
+    "include_status_context": false
+  }
 }

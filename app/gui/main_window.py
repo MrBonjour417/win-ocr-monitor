@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 from datetime import datetime
@@ -25,6 +26,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSplitter,
     QSpinBox,
@@ -32,16 +34,21 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from app.ai.env import load_ai_secret_settings
+from app.ai.models import AIAnalysisRequest, AISecretSettings
 from app.alert.notifier import AlertManager
 from app.capture.window import capture_window, get_window_rect, list_windows, save_snapshot_bundle
 from app.config import monitor_config_from_dict, monitor_config_to_dict
 from app.detect.monitor import MonitorThread
+from app.gui.ai_analysis_dialog import AiAnalysisDialog
+from app.gui.ai_settings_dialog import AiSettingsDialog
 from app.gui.roi_selector import RoiCanvas
-from app.types import DEFAULT_KEYWORDS, FrameCapture, MonitorConfig, QuestionEvent, Rect
+from app.types import AIConfig, DEFAULT_KEYWORDS, FrameCapture, MonitorConfig, QuestionEvent, Rect
 
 
 def _ndarray_to_pixmap(image_bgr: np.ndarray) -> QPixmap:
@@ -68,6 +75,9 @@ class MainWindow(QMainWindow):
         self._current_config_path = ""
         self._monitor_thread: MonitorThread | None = None
         self._last_capture: FrameCapture | None = None
+        self._ai_config = AIConfig()
+        self._ai_secrets: AISecretSettings = load_ai_secret_settings()
+        self._analysis_windows: list[AiAnalysisDialog] = []
         self._calibration_timer = QTimer(self)
         self._calibration_timer.setInterval(500)
         self._calibration_timer.timeout.connect(self._refresh_live_calibration_preview)
@@ -184,6 +194,22 @@ class MainWindow(QMainWindow):
         snapshot_row.addWidget(self._snapshot_dir, 1)
         snapshot_row.addWidget(snapshot_browse)
         settings_layout.addRow("截图留档目录", snapshot_row)
+
+        ai_row = QHBoxLayout()
+        self._ai_yes_radio = QRadioButton("是")
+        self._ai_no_radio = QRadioButton("否")
+        self._ai_no_radio.setChecked(True)
+        self._ai_yes_radio.toggled.connect(self._update_ai_controls)
+        self._ai_settings_button = QToolButton()
+        self._ai_settings_button.setText("设置")
+        self._ai_settings_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        self._ai_settings_button.clicked.connect(self._open_ai_settings_dialog)
+        ai_row.addWidget(self._ai_yes_radio)
+        ai_row.addWidget(self._ai_no_radio)
+        ai_row.addWidget(self._ai_settings_button)
+        ai_row.addStretch(1)
+        settings_layout.addRow("AI 查询", ai_row)
+        self._update_ai_controls()
 
         right_column.addWidget(settings_group, 0)
 
@@ -388,6 +414,79 @@ class MainWindow(QMainWindow):
         if path:
             self._snapshot_dir.setText(path)
 
+    def _update_ai_controls(self) -> None:
+        enabled = self._ai_yes_radio.isChecked()
+        self._ai_settings_button.setVisible(enabled)
+        self._ai_settings_button.setEnabled(enabled)
+
+    def _open_ai_settings_dialog(self) -> None:
+        current_config = replace(self._ai_config, enabled=self._ai_yes_radio.isChecked())
+        dialog = AiSettingsDialog(current_config, self._ai_secrets, self)
+        if dialog.exec():
+            self._ai_config = dialog.ai_config()
+            self._ai_secrets = dialog.secret_settings()
+
+    def _current_ai_config(self) -> AIConfig:
+        current = replace(self._ai_config)
+        current.enabled = self._ai_yes_radio.isChecked()
+        if current.same_model:
+            current.verify_model = current.main_model
+        return current
+
+    def _validate_ai_settings(self, ai_config: AIConfig) -> str:
+        if not ai_config.enabled:
+            return ""
+        if not self._ai_secrets.base_url.strip():
+            return "AI 查询已开启，但 BASE_URL 为空，请先完成 AI 设置。"
+        if not self._ai_secrets.api_key.strip():
+            return "AI 查询已开启，但 API Key 为空，请先完成 AI 设置。"
+        if not ai_config.main_model.strip():
+            return "AI 查询已开启，但主模型为空，请先完成 AI 设置。"
+        if not ai_config.same_model and not ai_config.verify_model.strip():
+            return "AI 查询已开启，但验证模型为空，请先完成 AI 设置。"
+        if not ai_config.prompt.strip():
+            return "AI 查询已开启，但 Prompt 为空，请先完成 AI 设置。"
+        return ""
+
+    def _build_ai_request_for_event(self, event: QuestionEvent) -> tuple[AIAnalysisRequest, AISecretSettings]:
+        ai_config = self._current_ai_config()
+        validation_error = self._validate_ai_settings(ai_config)
+        if validation_error:
+            raise RuntimeError(validation_error)
+
+        request = AIAnalysisRequest(
+            snapshot_dir=event.snapshot_dir,
+            screenshot_path=event.screenshot_path,
+            question_image_path=event.question_image_path,
+            status_image_path=event.status_image_path,
+            fingerprint=event.fingerprint,
+            config=ai_config,
+        )
+        secrets = replace(self._ai_secrets)
+        return request, secrets
+
+    def _open_ai_analysis_dialog(self, event: QuestionEvent) -> None:
+        if not self._current_ai_config().enabled:
+            return
+
+        try:
+            request, _ = self._build_ai_request_for_event(event)
+        except Exception as exc:
+            self._append_log(f"[AI] 无法启动分析：{exc}")
+            return
+
+        dialog = AiAnalysisDialog(lambda: self._build_ai_request_for_event(event), self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.setWindowTitle(f"AI 分析结果 - {event.fingerprint[:8] or 'snapshot'}")
+        self._analysis_windows.append(dialog)
+        dialog.destroyed.connect(lambda *_: self._remove_analysis_window(dialog))
+        dialog.show()
+        self._append_log(f"[AI] 已打开分析窗口：{request.snapshot_dir}")
+
+    def _remove_analysis_window(self, dialog: AiAnalysisDialog) -> None:
+        if dialog in self._analysis_windows:
+            self._analysis_windows.remove(dialog)
+
     def _build_config(self) -> MonitorConfig:
         keywords = [
             token.strip()
@@ -409,12 +508,14 @@ class MainWindow(QMainWindow):
             snapshot_dir=self._snapshot_dir.text().strip() or "snapshots",
             reference_width=self._reference_size[0],
             reference_height=self._reference_size[1],
+            ai=self._current_ai_config(),
         )
 
     def _apply_config(self, config: MonitorConfig) -> None:
         self._question_roi = config.question_roi
         self._status_roi = config.status_roi
         self._reference_size = (config.reference_width, config.reference_height)
+        self._ai_config = replace(config.ai)
 
         self._poll_spin.setValue(config.poll_interval_ms)
         self._stable_spin.setValue(config.stable_frames)
@@ -423,6 +524,9 @@ class MainWindow(QMainWindow):
         self._keyword_edit.setText(",".join(config.keywords))
         self._sound_path.setText(config.sound_path)
         self._snapshot_dir.setText(config.snapshot_dir)
+        self._ai_yes_radio.setChecked(config.ai.enabled)
+        self._ai_no_radio.setChecked(not config.ai.enabled)
+        self._update_ai_controls()
         self._select_window_by_title(config.window_title)
         self._sync_canvas_rois()
         self._refresh_roi_table()
@@ -484,6 +588,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "未校准", "请先点击“截图校准”以记录窗口尺寸。")
             return
 
+        ai_validation_error = self._validate_ai_settings(config.ai)
+        if ai_validation_error:
+            QMessageBox.warning(self, "AI 设置未完成", ai_validation_error)
+            return
+
         os.makedirs(config.snapshot_dir, exist_ok=True)
         if self._calibration_timer.isActive():
             self._calibration_timer.stop()
@@ -535,6 +644,7 @@ class MainWindow(QMainWindow):
             self._append_log(
                 f"[Alert] 新内容提醒已触发，指纹 {event.fingerprint[:8]}，整窗截图：{event.screenshot_path}"
             )
+            self._open_ai_analysis_dialog(event)
         elif event.kind == "cleared":
             self._append_log("[Monitor] 监控内容已消失。")
 

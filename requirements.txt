@@ -1,4 +1,5 @@
 opencv-python>=4.13.0.92
+openai>=1.30.0
 pyqt6>=6.11.0
 pywin32>=306
 winrt-runtime>=3.2.1

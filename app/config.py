@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.types import DEFAULT_KEYWORDS, MonitorConfig, Rect
+from app.types import AIConfig, DEFAULT_KEYWORDS, MonitorConfig, Rect
 
 
 def monitor_config_to_dict(config: MonitorConfig) -> dict:
@@ -21,12 +21,31 @@ def monitor_config_to_dict(config: MonitorConfig) -> dict:
         }
         if config.reference_width > 0 and config.reference_height > 0
         else None,
+        "ai": {
+            "enabled": config.ai.enabled,
+            "prompt": config.ai.prompt,
+            "main_model": config.ai.main_model,
+            "verify_model": config.ai.verify_model,
+            "same_model": config.ai.same_model,
+            "wait_timeout_sec": config.ai.wait_timeout_sec,
+            "include_status_context": config.ai.include_status_context,
+        },
     }
 
 
 def monitor_config_from_dict(data: dict) -> MonitorConfig:
     window_size = data.get("window_size") or {}
     keywords = [str(x).strip() for x in data.get("keywords", []) if str(x).strip()]
+    ai_data = data.get("ai") or {}
+    ai_config = AIConfig(
+        enabled=bool(ai_data.get("enabled", False)),
+        prompt=str(ai_data.get("prompt", AIConfig().prompt)),
+        main_model=str(ai_data.get("main_model", AIConfig().main_model)).strip() or AIConfig().main_model,
+        verify_model=str(ai_data.get("verify_model", AIConfig().verify_model)).strip() or AIConfig().verify_model,
+        same_model=bool(ai_data.get("same_model", AIConfig().same_model)),
+        wait_timeout_sec=int(ai_data.get("wait_timeout_sec", AIConfig().wait_timeout_sec)),
+        include_status_context=bool(ai_data.get("include_status_context", AIConfig().include_status_context)),
+    )
 
     return MonitorConfig(
         window_title=str(data.get("window_title", "")),
@@ -41,4 +60,5 @@ def monitor_config_from_dict(data: dict) -> MonitorConfig:
         snapshot_dir=str(data.get("snapshot_dir", "snapshots")),
         reference_width=int(window_size.get("w", 0) or 0),
         reference_height=int(window_size.get("h", 0) or 0),
+        ai=ai_config,
     )
