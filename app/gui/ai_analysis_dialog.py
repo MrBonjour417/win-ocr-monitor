@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+import os
+
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QCloseEvent, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -20,11 +22,60 @@ from app.ai.models import AIAnalysisRequest, AIAnalysisResult, AISecretSettings
 from app.ai.worker import AIAnalysisWorker
 
 
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _load_pixmap_without_iccp_warning(image_path: str) -> QPixmap:
+    raw = _read_image_bytes(image_path)
+    if raw is None:
+        return QPixmap()
+
+    pixmap = QPixmap()
+    pixmap.loadFromData(_strip_png_iccp_chunk(raw))
+    return pixmap
+
+
+def _read_image_bytes(image_path: str) -> bytes | None:
+    if not image_path or not os.path.exists(image_path):
+        return None
+    try:
+        with open(image_path, "rb") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def _strip_png_iccp_chunk(data: bytes) -> bytes:
+    if not data.startswith(_PNG_SIGNATURE):
+        return data
+
+    chunks: list[bytes] = [_PNG_SIGNATURE]
+    offset = len(_PNG_SIGNATURE)
+    data_length = len(data)
+
+    while offset + 12 <= data_length:
+        chunk_start = offset
+        chunk_len = int.from_bytes(data[offset : offset + 4], "big")
+        chunk_type = data[offset + 4 : offset + 8]
+        chunk_end = offset + 12 + chunk_len
+        if chunk_end > data_length:
+            return data
+        if chunk_type != b"iCCP":
+            chunks.append(data[chunk_start:chunk_end])
+        offset = chunk_end
+
+    if offset != data_length:
+        return data
+
+    return b"".join(chunks)
+
+
 class AiAnalysisDialog(QDialog):
     def __init__(self, request_provider, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("AI 分析结果")
-        self.setMinimumSize(760, 760)
+        self.setMinimumSize(720, 620)
+        self.resize(self._recommended_dialog_size())
 
         self._request_provider = request_provider
         self._worker: AIAnalysisWorker | None = None
@@ -39,15 +90,24 @@ class AiAnalysisDialog(QDialog):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
+        self._content_scroll = QScrollArea()
+        self._content_scroll.setWidgetResizable(True)
+        self._content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        layout.addWidget(self._content_scroll, 1)
+
+        content = QWidget()
+        self._content_scroll.setWidget(content)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(8)
+
         image_group = QGroupBox("截图")
         image_layout = QVBoxLayout(image_group)
         self._image_label = QLabel("暂无截图")
         self._image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._image_scroll = QScrollArea()
-        self._image_scroll.setWidgetResizable(True)
-        self._image_scroll.setWidget(self._image_label)
-        image_layout.addWidget(self._image_scroll)
-        layout.addWidget(image_group, 2)
+        self._image_label.setWordWrap(False)
+        image_layout.addWidget(self._image_label)
+        content_layout.addWidget(image_group, 0)
 
         meta_group = QGroupBox("元信息")
         meta_layout = QVBoxLayout(meta_group)
@@ -57,29 +117,29 @@ class AiAnalysisDialog(QDialog):
         self._state_label.setWordWrap(True)
         meta_layout.addWidget(self._meta_label)
         meta_layout.addWidget(self._state_label)
-        layout.addWidget(meta_group, 0)
+        content_layout.addWidget(meta_group, 0)
 
         result_group = QGroupBox("结果")
         result_layout = QVBoxLayout(result_group)
         result_layout.addWidget(QLabel("主模型结果"))
         self._main_result_edit = QPlainTextEdit()
         self._main_result_edit.setReadOnly(True)
-        self._main_result_edit.setMinimumHeight(120)
+        self._main_result_edit.setMinimumHeight(130)
         result_layout.addWidget(self._main_result_edit)
         result_layout.addWidget(QLabel("验证结果"))
         self._verify_result_edit = QPlainTextEdit()
         self._verify_result_edit.setReadOnly(True)
-        self._verify_result_edit.setMinimumHeight(100)
+        self._verify_result_edit.setMinimumHeight(110)
         result_layout.addWidget(self._verify_result_edit)
-        layout.addWidget(result_group, 2)
+        content_layout.addWidget(result_group, 0)
 
         log_group = QGroupBox("AI 查询日志")
         log_layout = QVBoxLayout(log_group)
         self._log_edit = QPlainTextEdit()
         self._log_edit.setReadOnly(True)
-        self._log_edit.setMinimumHeight(180)
+        self._log_edit.setMinimumHeight(200)
         log_layout.addWidget(self._log_edit)
-        layout.addWidget(log_group, 2)
+        content_layout.addWidget(log_group, 1)
 
         button_row = QHBoxLayout()
         self._copy_result_button = QPushButton("复制结果")
@@ -201,7 +261,7 @@ class AiAnalysisDialog(QDialog):
         self._state_label.setText(f"状态：{status_text}")
 
     def _set_preview_image(self, image_path: str) -> None:
-        pixmap = QPixmap(image_path)
+        pixmap = _load_pixmap_without_iccp_warning(image_path)
         self._preview_pixmap = pixmap if not pixmap.isNull() else None
         self._refresh_image_preview()
 
@@ -209,12 +269,36 @@ class AiAnalysisDialog(QDialog):
         if self._preview_pixmap is None:
             self._image_label.setText("暂无截图")
             self._image_label.setPixmap(QPixmap())
+            self._image_label.setMinimumSize(0, 220)
+            self._image_label.setMaximumSize(16777215, 16777215)
             return
 
-        target_size = self._image_scroll.viewport().size()
+        target_size = self._preview_target_size()
         scaled = self._preview_pixmap.scaled(
             target_size,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
         self._image_label.setPixmap(scaled)
+        self._image_label.setFixedSize(scaled.size())
+        self._image_label.setText("")
+
+    def _preview_target_size(self) -> QSize:
+        viewport = self._content_scroll.viewport().size()
+        width = max(360, viewport.width() - 48)
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            max_height = 420
+        else:
+            max_height = max(240, min(460, int(screen.availableGeometry().height() * 0.38)))
+        return QSize(width, max_height)
+
+    def _recommended_dialog_size(self) -> QSize:
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return QSize(920, 820)
+
+        available = screen.availableGeometry()
+        width = max(720, min(1020, int(available.width() * 0.62)))
+        height = max(620, min(860, int(available.height() * 0.82)))
+        return QSize(width, height)
