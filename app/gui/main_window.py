@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
 
 from app.ai.env import load_ai_secret_settings
 from app.ai.models import AIAnalysisRequest, AISecretSettings
+from app.ai.preferences import load_ai_preferences, save_ai_preferences
 from app.alert.notifier import AlertManager
 from app.capture.window import capture_window, get_window_rect, list_windows, save_snapshot_bundle
 from app.config import monitor_config_from_dict, monitor_config_to_dict
@@ -75,7 +76,7 @@ class MainWindow(QMainWindow):
         self._current_config_path = ""
         self._monitor_thread: MonitorThread | None = None
         self._last_capture: FrameCapture | None = None
-        self._ai_config = AIConfig()
+        self._ai_config = load_ai_preferences()
         self._ai_secrets: AISecretSettings = load_ai_secret_settings()
         self._analysis_windows: list[AiAnalysisDialog] = []
         self._calibration_timer = QTimer(self)
@@ -198,12 +199,13 @@ class MainWindow(QMainWindow):
         ai_row = QHBoxLayout()
         self._ai_yes_radio = QRadioButton("是")
         self._ai_no_radio = QRadioButton("否")
-        self._ai_no_radio.setChecked(True)
-        self._ai_yes_radio.toggled.connect(self._update_ai_controls)
         self._ai_settings_button = QToolButton()
         self._ai_settings_button.setText("设置")
         self._ai_settings_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
         self._ai_settings_button.clicked.connect(self._open_ai_settings_dialog)
+        self._ai_yes_radio.toggled.connect(self._update_ai_controls)
+        self._ai_yes_radio.setChecked(self._ai_config.enabled)
+        self._ai_no_radio.setChecked(not self._ai_config.enabled)
         ai_row.addWidget(self._ai_yes_radio)
         ai_row.addWidget(self._ai_no_radio)
         ai_row.addWidget(self._ai_settings_button)
@@ -415,6 +417,8 @@ class MainWindow(QMainWindow):
             self._snapshot_dir.setText(path)
 
     def _update_ai_controls(self) -> None:
+        if not hasattr(self, "_ai_settings_button"):
+            return
         enabled = self._ai_yes_radio.isChecked()
         self._ai_settings_button.setVisible(enabled)
         self._ai_settings_button.setEnabled(enabled)
@@ -425,6 +429,7 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             self._ai_config = dialog.ai_config()
             self._ai_secrets = dialog.secret_settings()
+            self._persist_ai_preferences()
 
     def _current_ai_config(self) -> AIConfig:
         current = replace(self._ai_config)
@@ -432,6 +437,10 @@ class MainWindow(QMainWindow):
         if current.same_model:
             current.verify_model = current.main_model
         return current
+
+    def _persist_ai_preferences(self) -> None:
+        self._ai_config = self._current_ai_config()
+        save_ai_preferences(self._ai_config)
 
     def _validate_ai_settings(self, ai_config: AIConfig) -> str:
         if not ai_config.enabled:
@@ -527,6 +536,7 @@ class MainWindow(QMainWindow):
         self._ai_yes_radio.setChecked(config.ai.enabled)
         self._ai_no_radio.setChecked(not config.ai.enabled)
         self._update_ai_controls()
+        self._persist_ai_preferences()
         self._select_window_by_title(config.window_title)
         self._sync_canvas_rois()
         self._refresh_roi_table()
@@ -691,6 +701,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         self._calibration_timer.stop()
         self._stop_monitoring()
+        self._persist_ai_preferences()
         if self._tray_icon is not None:
             self._tray_icon.hide()
         super().closeEvent(event)

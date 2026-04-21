@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.ai.env import load_ai_secret_settings, save_ai_secret_settings
 from app.ai.models import AIAnalysisRequest, AISecretSettings
+from app.ai.preferences import load_ai_preferences, save_ai_preferences
 from app.ai.service import AIAnalysisService
 from app.config import monitor_config_from_dict, monitor_config_to_dict
 from app.types import AIConfig, DEFAULT_AI_BASE_URL, MonitorConfig
@@ -188,6 +189,33 @@ class AIServiceTests(unittest.TestCase):
         decoded = monitor_config_from_dict(encoded)
 
         self.assertEqual(decoded.ai, original.ai)
+
+    def test_ai_preferences_round_trip_preserves_prompt_and_models(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prefs_path = Path(temp_dir) / ".window_ocr_monitor.ai.json"
+            original = AIConfig(
+                enabled=True,
+                prompt="这是用户修改后的 prompt",
+                main_model="main-model",
+                verify_model="verify-model",
+                same_model=False,
+                wait_timeout_sec=42,
+                include_status_context=True,
+            )
+
+            save_ai_preferences(original, prefs_path)
+            loaded = load_ai_preferences(prefs_path)
+
+            self.assertEqual(loaded, original)
+
+    def test_ai_preferences_falls_back_when_file_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prefs_path = Path(temp_dir) / ".window_ocr_monitor.ai.json"
+            prefs_path.write_text("{not-json", encoding="utf-8")
+
+            loaded = load_ai_preferences(prefs_path)
+
+            self.assertEqual(loaded, AIConfig())
 
 
 if __name__ == "__main__":

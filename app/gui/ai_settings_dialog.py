@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QRadioButton,
     QSpinBox,
     QToolButton,
@@ -25,7 +26,7 @@ from PyQt6.QtWidgets import (
 from app.ai.service import AIAnalysisService
 from app.ai.models import AISecretSettings
 from app.ai.env import save_ai_secret_settings
-from app.types import AIConfig, recommended_ai_models_tooltip
+from app.types import AIConfig, default_ai_prompt, recommended_ai_models_tooltip
 
 
 class AiSettingsDialog(QDialog):
@@ -115,7 +116,16 @@ class AiSettingsDialog(QDialog):
 
         layout.addWidget(form_widget)
 
-        layout.addWidget(QLabel("Prompt"))
+        prompt_header = QHBoxLayout()
+        prompt_header.setContentsMargins(0, 0, 0, 0)
+        prompt_header.addWidget(QLabel("Prompt"))
+        prompt_header.addStretch(1)
+
+        self._restore_prompt_button = QPushButton("恢复默认 Prompt")
+        self._restore_prompt_button.clicked.connect(self._restore_default_prompt)
+        prompt_header.addWidget(self._restore_prompt_button)
+        layout.addLayout(prompt_header)
+
         self._prompt_edit = QPlainTextEdit()
         self._prompt_edit.setPlaceholderText("请输入用于截图分析的提示词。")
         layout.addWidget(self._prompt_edit, 1)
@@ -154,6 +164,9 @@ class AiSettingsDialog(QDialog):
     def _sync_verify_model_if_needed(self) -> None:
         if self._same_model_yes.isChecked():
             self._verify_model_edit.setText(self._main_model_edit.text().strip())
+
+    def _restore_default_prompt(self) -> None:
+        self._prompt_edit.setPlainText(default_ai_prompt())
 
     def _collect_form_state(self, require_prompt: bool) -> tuple[AIConfig, AISecretSettings] | None:
         base_url = self._base_url_edit.text().strip()

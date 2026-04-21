@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+.window_ocr_monitor.ai.json
 snapshots/
 build/
 dist/
