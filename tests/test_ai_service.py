@@ -31,6 +31,54 @@ class FakeVisionClient:
 
 
 class AIServiceTests(unittest.TestCase):
+    def test_connectivity_same_model_only_calls_once_without_images(self) -> None:
+        calls: list[tuple[str, tuple[str, ...]]] = []
+        service = AIAnalysisService(
+            AISecretSettings(base_url=DEFAULT_AI_BASE_URL, api_key="test"),
+            client_factory=lambda _secrets: FakeVisionClient({"gpt-5.4": "OK"}, calls),
+        )
+
+        results, log_lines = service.test_connectivity(
+            AIConfig(
+                enabled=True,
+                main_model="gpt-5.4",
+                verify_model="gpt-5.4",
+                same_model=True,
+                wait_timeout_sec=12,
+            )
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0], ("gpt-5.4", ()))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].status, "success")
+        self.assertIn("连通性测试完成", "\n".join(log_lines))
+
+    def test_connectivity_dual_model_calls_both_models(self) -> None:
+        calls: list[tuple[str, tuple[str, ...]]] = []
+        service = AIAnalysisService(
+            AISecretSettings(base_url=DEFAULT_AI_BASE_URL, api_key="test"),
+            client_factory=lambda _secrets: FakeVisionClient(
+                {"main-model": "OK", "verify-model": RuntimeError("401 unauthorized")},
+                calls,
+            ),
+        )
+
+        results, _ = service.test_connectivity(
+            AIConfig(
+                enabled=True,
+                main_model="main-model",
+                verify_model="verify-model",
+                same_model=False,
+                wait_timeout_sec=10,
+            )
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertCountEqual([call[0] for call in calls], ["main-model", "verify-model"])
+        self.assertEqual(len(results), 2)
+        self.assertEqual(sorted(result.status for result in results), ["error", "success"])
+
     def test_same_model_only_calls_once_and_persists_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             snapshot_dir = Path(temp_dir)

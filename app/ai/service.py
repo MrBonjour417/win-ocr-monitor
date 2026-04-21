@@ -85,6 +85,58 @@ class AIAnalysisService:
         result.result_path, result.log_path = self._persist_result(result)
         return result
 
+    def test_connectivity(self, config, log_callback=None) -> tuple[list[AIModelResponse], list[str]]:
+        log_lines: list[str] = []
+
+        def log(message: str) -> None:
+            line = f"[{datetime.now():%H:%M:%S}] {message}"
+            log_lines.append(line)
+            if log_callback is not None:
+                log_callback(line)
+
+        targets = [("主模型", config.main_model)]
+        if not config.same_model and config.verify_model.strip():
+            targets.append(("验证模型", config.verify_model))
+
+        results_by_role: dict[str, AIModelResponse] = {}
+        prompt = "请只回复：OK"
+        log(f"[AI] 开始连通性测试，超时 {config.wait_timeout_sec}s")
+
+        if len(targets) == 1:
+            role_name, model_name = targets[0]
+            results_by_role[role_name] = self._run_model(
+                model_name=model_name,
+                prompt=prompt,
+                image_paths=[],
+                timeout_sec=config.wait_timeout_sec,
+                role_name=role_name,
+                log=log,
+            )
+        else:
+            future_map = {}
+            with ThreadPoolExecutor(max_workers=len(targets)) as executor:
+                for role_name, model_name in targets:
+                    future_map[
+                        executor.submit(
+                            self._run_model,
+                            model_name,
+                            prompt,
+                            [],
+                            config.wait_timeout_sec,
+                            role_name,
+                            log,
+                        )
+                    ] = role_name
+
+                for future in as_completed(future_map):
+                    role_name = future_map[future]
+                    results_by_role[role_name] = future.result()
+
+        ordered_results = [results_by_role[role_name] for role_name, _ in targets]
+        successes = sum(1 for result in ordered_results if result.status == "success")
+        log(f"[AI] 连通性测试完成，成功 {successes}/{len(ordered_results)}")
+        return ordered_results, log_lines
+
     def _pick_source_image(self, request: AIAnalysisRequest) -> str:
         candidates = [
             request.question_image_path,
