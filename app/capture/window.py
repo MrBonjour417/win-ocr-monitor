@@ -14,6 +14,38 @@ import win32ui
 from app.types import Rect
 
 
+def _safe_delete_bitmap(bitmap) -> None:
+    if bitmap is None:
+        return
+    try:
+        handle = bitmap.GetHandle()
+    except Exception:
+        return
+    if handle:
+        try:
+            ctypes.windll.gdi32.DeleteObject(handle)
+        except Exception:
+            pass
+
+
+def _safe_delete_dc(dc) -> None:
+    if dc is None:
+        return
+    try:
+        dc.DeleteDC()
+    except Exception:
+        pass
+
+
+def _safe_release_dc(hwnd: int, hwnd_dc: int) -> None:
+    if not hwnd_dc:
+        return
+    try:
+        win32gui.ReleaseDC(hwnd, hwnd_dc)
+    except Exception:
+        pass
+
+
 def list_windows() -> list[tuple[int, str]]:
     results: list[tuple[int, str]] = []
 
@@ -89,14 +121,13 @@ def capture_window(hwnd: int) -> np.ndarray | None:
         bits = bitmap.GetBitmapBits(True)
         bgra = np.frombuffer(bits, dtype=np.uint8).reshape(rect.h, rect.w, 4)
         return cv2.cvtColor(bgra, cv2.COLOR_BGRA2BGR)
+    except win32ui.error:
+        return None
     finally:
-        if bitmap is not None:
-            ctypes.windll.gdi32.DeleteObject(bitmap.GetHandle())
-        if mem_dc is not None:
-            mem_dc.DeleteDC()
-        if src_dc is not None:
-            src_dc.DeleteDC()
-        win32gui.ReleaseDC(hwnd, hwnd_dc)
+        _safe_delete_bitmap(bitmap)
+        _safe_delete_dc(mem_dc)
+        _safe_delete_dc(src_dc)
+        _safe_release_dc(hwnd, hwnd_dc)
 
 
 def crop_roi_from_frame(frame_bgr: np.ndarray, window_rect: Rect, roi_rect: Rect | None) -> np.ndarray | None:

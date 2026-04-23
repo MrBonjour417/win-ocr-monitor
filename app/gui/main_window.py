@@ -347,7 +347,12 @@ class MainWindow(QMainWindow):
     def _refresh_live_calibration_preview(self) -> None:
         if self._canvas.is_interacting():
             return
-        self._update_calibration_capture(show_errors=False)
+        try:
+            self._update_calibration_capture(show_errors=False)
+        except Exception as exc:
+            self._calibration_timer.stop()
+            self._capture_button.setText("截图校准")
+            self._append_log(f"[Capture] 实时校准预览异常，已自动停止：{exc}")
 
     def _update_calibration_capture(self, show_errors: bool) -> bool:
         hwnd = self._window_combo.currentData()
